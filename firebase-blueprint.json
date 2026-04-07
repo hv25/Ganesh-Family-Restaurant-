@@ -1,0 +1,168 @@
+{
+  "entities": {
+    "Order": {
+      "title": "Order",
+      "description": "A customer order in the restaurant system.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "customerName": { "type": "string" },
+        "userId": { "type": "string" },
+        "phone": { "type": "string" },
+        "address": { "type": "string" },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "name": { "type": "string" },
+              "price": { "type": "number" },
+              "quantity": { "type": "number" },
+              "instructions": { "type": "string" }
+            }
+          }
+        },
+        "totalAmount": { "type": "number" },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "preparing", "ready", "completed", "cancelled"]
+        },
+        "paymentStatus": {
+          "type": "string",
+          "enum": ["pending", "paid"]
+        },
+        "paymentMethod": {
+          "type": "string",
+          "enum": ["cash", "upi", "card"]
+        },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "tableNumber": { "type": "string" }
+      },
+      "required": ["customerName", "phone", "items", "totalAmount", "status", "paymentStatus", "createdAt"]
+    },
+    "UserProfile": {
+      "title": "User Profile",
+      "description": "Staff or Admin user profile.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "role": {
+          "type": "string",
+          "enum": ["admin", "kitchen", "staff", "customer"]
+        },
+        "displayName": { "type": "string" },
+        "phone": { "type": "string" },
+        "address": { "type": "string" }
+      },
+      "required": ["uid", "email", "role"]
+    },
+    "MenuItem": {
+      "title": "Menu Item",
+      "description": "An item on the restaurant menu.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "price": { "type": "number" },
+        "description": { "type": "string" },
+        "categoryId": { "type": "string" },
+        "isSpecial": { "type": "boolean" },
+        "available": { "type": "boolean" }
+      },
+      "required": ["name", "price", "categoryId", "available"]
+    },
+    "MenuCategory": {
+      "title": "Menu Category",
+      "description": "A category for menu items (e.g., Biryani, Starters).",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "icon": { "type": "string" },
+        "order": { "type": "number" }
+      },
+      "required": ["name", "order"]
+    },
+    "TableBooking": {
+      "title": "Table Booking",
+      "description": "A reservation for a table.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "customerName": { "type": "string" },
+        "phone": { "type": "string" },
+        "date": { "type": "string" },
+        "time": { "type": "string" },
+        "guests": { "type": "number" },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "confirmed", "cancelled"]
+        },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "customerName", "phone", "date", "time", "guests", "status", "createdAt"]
+    },
+    "Review": {
+      "title": "Review",
+      "description": "A customer review for an order.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "orderId": { "type": "string" },
+        "userId": { "type": "string" },
+        "customerName": { "type": "string" },
+        "rating": { "type": "number" },
+        "comment": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["orderId", "userId", "customerName", "rating", "createdAt"]
+    },
+    "Advertisement": {
+      "title": "Advertisement",
+      "description": "A local advertisement image or video.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "type": { "type": "string", "enum": ["image", "video"] },
+        "url": { "type": "string" },
+        "active": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "type", "url", "active", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/orders/{orderId}": {
+      "schema": "Order",
+      "description": "Collection of all restaurant orders."
+    },
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Collection of staff and admin user profiles."
+    },
+    "/categories/{categoryId}": {
+      "schema": "MenuCategory",
+      "description": "Collection of menu categories."
+    },
+    "/menuItems/{itemId}": {
+      "schema": "MenuItem",
+      "description": "Collection of all menu items."
+    },
+    "/bookings/{bookingId}": {
+      "schema": "TableBooking",
+      "description": "Collection of table reservations."
+    },
+    "/reviews/{reviewId}": {
+      "schema": "Review",
+      "description": "Collection of customer reviews."
+    },
+    "/advertisements/{adId}": {
+      "schema": "Advertisement",
+      "description": "Collection of local advertisements."
+    }
+  }
+}

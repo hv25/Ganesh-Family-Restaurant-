@@ -1,0 +1,159 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: userId (uid)
+    // Fields:
+    //   - uid: string (required)
+    //   - email: string (required)
+    //   - role: string (required, ['admin', 'kitchen', 'staff', 'customer'])
+    //   - displayName: string (optional)
+    //
+    // Collection: orders
+    // Document ID: auto-generated
+    // Fields:
+    //   - customerName: string (required)
+    //   - userId: string (optional)
+    //   - phone: string (required)
+    //   - address: string (required)
+    //   - items: array (required)
+    //   - totalAmount: number (required)
+    //   - status: string (required, ['pending', 'preparing', 'ready', 'completed', 'cancelled'])
+    //   - paymentStatus: string (required, ['pending', 'paid'])
+    //   - createdAt: timestamp (required)
+    //   - instructions: string (optional)
+    //
+    // Collection: categories
+    // Document ID: auto-generated
+    // Fields:
+    //   - name: string (required)
+    //   - icon: string (optional)
+    //   - order: number (required)
+    //
+    // Collection: menuItems
+    // Document ID: auto-generated
+    // Fields:
+    //   - name: string (required)
+    //   - price: number (required)
+    //   - categoryId: string (required)
+    //   - available: boolean (required)
+    //   - isSpecial: boolean (optional)
+    //   - description: string (optional)
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    function isAdmin() {
+      return isAuthenticated() && 
+        ((exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin') ||
+         (request.auth.token.email == "hv81764@gmail.com"));
+    }
+    
+    function isStaff() {
+      return isAdmin() || (isAuthenticated() && 
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'staff', 'kitchen']));
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function isValidUser(data) {
+      return data.uid is string &&
+             data.email is string &&
+             data.role in ['admin', 'kitchen', 'staff', 'customer'] &&
+             (!('displayName' in data) || (data.displayName is string && data.displayName.size() < 100)) &&
+             (!('phone' in data) || (data.phone is string && data.phone.size() < 20)) &&
+             (!('address' in data) || (data.address is string && data.address.size() < 500));
+    }
+
+    function isValidOrder(data) {
+      let requiredFields = ['customerName', 'phone', 'address', 'items', 'totalAmount', 'status', 'paymentStatus', 'createdAt'];
+      return data.keys().hasAll(requiredFields) &&
+             data.customerName is string && data.customerName.size() > 0 &&
+             data.phone is string && data.phone.size() > 0 &&
+             data.address is string && data.address.size() > 0 &&
+             data.items is list && data.items.size() > 0 &&
+             data.totalAmount is number &&
+             data.status in ['pending', 'preparing', 'ready', 'completed', 'cancelled'] &&
+             data.paymentStatus in ['pending', 'paid'] &&
+             (!('paymentMethod' in data) || data.paymentMethod in ['cash', 'upi', 'card']) &&
+             (data.createdAt == request.time || data.createdAt is timestamp);
+    }
+
+    function isValidAdvertisement(data) {
+      return data.title is string && data.title.size() > 0 &&
+             data.type in ['image', 'video'] &&
+             data.url is string && data.url.size() > 0 &&
+             data.active is bool;
+    }
+
+    // ===============================================================
+    // Collection Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isOwner(userId) && 
+                      isValidUser(request.resource.data) && 
+                      (request.resource.data.role == 'customer' || (request.resource.data.role == 'admin' && isAdmin()));
+      allow update: if (isOwner(userId) && 
+                       isValidUser(request.resource.data) && 
+                       request.resource.data.role == resource.data.role) || 
+                      isAdmin();
+    }
+
+    match /orders/{orderId} {
+      allow read: if isStaff() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+      allow create: if isAuthenticated() && 
+                      isValidOrder(request.resource.data) && 
+                      (!('userId' in request.resource.data) || request.resource.data.userId == request.auth.uid);
+      allow update: if isStaff() && isValidOrder(request.resource.data);
+    }
+
+    match /categories/{categoryId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /menuItems/{itemId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /bookings/{bookingId} {
+      allow read: if isStaff() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+      allow create: if isAuthenticated() && 
+                      request.resource.data.userId == request.auth.uid &&
+                      request.resource.data.status == 'pending';
+      allow update: if isStaff();
+    }
+
+    match /reviews/{reviewId} {
+      allow read: if true;
+      allow create: if isAuthenticated() && 
+                      request.resource.data.userId == request.auth.uid;
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+
+    match /advertisements/{adId} {
+      allow read: if true;
+      allow create, update, delete: if isAdmin();
+    }
+  }
+}

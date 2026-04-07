@@ -1,0 +1,22 @@
+@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@700&family=Poppins:wght@300;400;500;600;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Poppins", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Cinzel", serif;
+  
+  --color-primary-gold: #f39c12;
+  --color-deep-red: #c0392b;
+  --color-dark-bg: #1a110a;
+  --color-cream-bg: #fffcf5;
+}
+
+@layer base {
+  body {
+    @apply bg-cream-bg text-gray-800 font-sans scroll-smooth;
+  }
+  
+  h1, h2, h3, h4 {
+    @apply font-display font-bold;
+  }
+}
