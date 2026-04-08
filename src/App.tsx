@@ -54,7 +54,7 @@ import {
   signOut,
   User as FirebaseUser
 } from 'firebase/auth';
-import { db, auth, handleFirestoreError, OperationType } from './firebase';
+import { db, auth, handleFirestoreError, OperationType, increment } from './firebase';
 import { Order, OrderStatus, PaymentStatus, PaymentMethod, UserProfile, OrderItem, MenuItem, MenuCategory, OrderType, Advertisement } from './types';
 import { INITIAL_MENU_DATA } from './constants';
 import { KitchenDashboard } from './components/KitchenDashboard';
@@ -72,6 +72,21 @@ function cn(...inputs: ClassValue[]) {
 }
 
 // --- COMPONENTS ---
+
+const Loader = ({ size = 24, className = "" }: { size?: number, className?: string }) => (
+  <div className={cn("flex items-center justify-center", className)}>
+    <motion.div
+      animate={{ rotate: 360 }}
+      transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+      style={{ width: size, height: size }}
+      className="border-2 border-primary-gold border-t-transparent rounded-full"
+    />
+  </div>
+);
+
+const Skeleton = ({ className }: { className?: string }) => (
+  <div className={cn("animate-pulse bg-gray-200 rounded-xl", className)} />
+);
 
 const Navbar = ({ 
   scrolled, 
@@ -244,6 +259,27 @@ export default function App() {
   // Orders State
   const [orders, setOrders] = useState<Order[]>([]);
   const [advertisements, setAdvertisements] = useState<Advertisement[]>([]);
+  const [isLoadingMenu, setIsLoadingMenu] = useState(true);
+
+  const trackAdView = async (adId: string) => {
+    try {
+      await updateDoc(doc(db, 'advertisements', adId), {
+        views: increment(1)
+      });
+    } catch (e) {
+      console.error("Failed to track ad view:", e);
+    }
+  };
+
+  const trackAdClick = async (adId: string) => {
+    try {
+      await updateDoc(doc(db, 'advertisements', adId), {
+        clicks: increment(1)
+      });
+    } catch (e) {
+      console.error("Failed to track ad click:", e);
+    }
+  };
 
   useEffect(() => {
     if (user) {
@@ -315,6 +351,17 @@ export default function App() {
     return () => unsubscribe();
   }, []);
   
+  useEffect(() => {
+    if (isCartOpen || isBookingOpen || isCheckoutOpen || isMenuOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = 'unset';
+    }
+    return () => {
+      document.body.style.overflow = 'unset';
+    };
+  }, [isCartOpen, isBookingOpen, isCheckoutOpen, isMenuOpen]);
+
   // Cart State
   const [cart, setCart] = useState<OrderItem[]>([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
@@ -374,6 +421,7 @@ export default function App() {
 
   // Fetch Categories and Menu Items
   useEffect(() => {
+    setIsLoadingMenu(true);
     const unsubCats = onSnapshot(query(collection(db, 'categories'), orderBy('order')), (snap) => {
       const cats = snap.docs.map(d => ({ id: d.id, ...d.data() })) as MenuCategory[];
       setCategories(cats);
@@ -387,8 +435,10 @@ export default function App() {
     const unsubItems = onSnapshot(collection(db, 'menuItems'), (snap) => {
       const items = snap.docs.map(d => ({ id: d.id, ...d.data() })) as MenuItem[];
       setMenuItems(items);
+      setIsLoadingMenu(false);
     }, (error) => {
       handleFirestoreError(error, OperationType.LIST, 'menuItems');
+      setIsLoadingMenu(false);
     });
 
     return () => {
@@ -816,34 +866,74 @@ export default function App() {
               <div className="flex-1 h-[1px] bg-gray-100"></div>
               <span className="text-[10px] font-mono text-gray-400">Ads: {advertisements.length}</span>
             </div>
-            <div className="flex gap-6 overflow-x-auto pb-8 scrollbar-hide snap-x">
+            <div className="flex gap-6 overflow-x-auto pb-8 snap-x">
               {advertisements.map((ad) => (
                 <motion.div 
                   key={ad.id}
                   initial={{ opacity: 0, scale: 0.9 }}
                   whileInView={{ opacity: 1, scale: 1 }}
+                  onViewportEnter={() => trackAdView(ad.id)}
                   viewport={{ once: true }}
-                  className="flex-shrink-0 w-[280px] sm:w-[400px] aspect-video rounded-3xl overflow-hidden shadow-xl snap-center relative group"
+                  onClick={() => trackAdClick(ad.id)}
+                  className="flex-shrink-0 w-[300px] sm:w-[450px] rounded-3xl overflow-hidden shadow-xl snap-center relative group cursor-pointer"
                 >
-                  {ad.type === 'video' ? (
-                    <video 
-                      src={ad.url} 
-                      className="w-full h-full object-cover" 
-                      autoPlay 
-                      muted 
-                      loop 
-                      playsInline 
-                    />
-                  ) : (
-                    <img 
-                      src={ad.url} 
-                      alt={ad.title} 
-                      className="w-full h-full object-cover" 
-                      referrerPolicy="no-referrer"
-                    />
-                  )}
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-6">
-                    <h3 className="text-white font-bold text-lg">{ad.title}</h3>
+                  <div className="aspect-video relative">
+                    {ad.type === 'video' ? (
+                      <video 
+                        src={ad.url} 
+                        className="w-full h-full object-cover" 
+                        autoPlay 
+                        muted 
+                        loop 
+                        playsInline 
+                      />
+                    ) : (
+                      <img 
+                        src={ad.url} 
+                        alt={ad.title} 
+                        className="w-full h-full object-cover" 
+                        referrerPolicy="no-referrer"
+                      />
+                    )}
+                    
+                    {/* Overlay Info */}
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-all duration-300 flex flex-col justify-end p-6">
+                      <div className="transform translate-y-4 group-hover:translate-y-0 transition-transform duration-300">
+                        {ad.businessName && (
+                          <span className="inline-block px-3 py-1 bg-primary-gold text-black text-[10px] font-black uppercase tracking-widest rounded-full mb-2">
+                            {ad.businessName}
+                          </span>
+                        )}
+                        <h3 className="text-white font-display text-xl mb-1">{ad.title}</h3>
+                        {ad.description && (
+                          <p className="text-gray-300 text-sm line-clamp-2 mb-3">{ad.description}</p>
+                        )}
+                        
+                        <div className="flex items-center justify-between">
+                          {ad.phone && (
+                            <a 
+                              href={`tel:${ad.phone}`}
+                              onClick={(e) => e.stopPropagation()}
+                              className="flex items-center gap-2 text-primary-gold font-bold text-sm hover:underline"
+                            >
+                              <Phone size={14} />
+                              {ad.phone}
+                            </a>
+                          )}
+                          {ad.location && (
+                            <div className="flex items-center gap-1 text-gray-400 text-xs">
+                              <MapPin size={12} />
+                              {ad.location}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Simple Title Overlay (Visible by default) */}
+                    <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/60 to-transparent group-hover:opacity-0 transition-opacity">
+                      <h3 className="text-white font-bold text-lg">{ad.title}</h3>
+                    </div>
                   </div>
                 </motion.div>
               ))}
@@ -901,67 +991,86 @@ export default function App() {
           </div>
 
           {/* Menu Content */}
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={activeCategoryId + searchTerm}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -20 }}
-              transition={{ duration: 0.3 }}
-              className="grid grid-cols-1 md:grid-cols-2 gap-8 lg:gap-12"
-            >
-              {(searchTerm 
-                ? menuItems.filter(item => item.name.toLowerCase().includes(searchTerm.toLowerCase()))
-                : menuItems.filter(item => item.categoryId === activeCategoryId)
-              ).length > 0 ? (
-                <div className="bg-cream-bg border border-gray-100 p-6 sm:p-8 rounded-2xl md:col-span-2">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-6">
-                    {(searchTerm 
-                      ? menuItems.filter(item => item.name.toLowerCase().includes(searchTerm.toLowerCase()))
-                      : menuItems.filter(item => item.categoryId === activeCategoryId)
-                    ).map((item, iIdx) => (
-                        <div key={iIdx} className="flex justify-between items-center border-b border-dashed border-gray-300 pb-3 group">
-                          <div className="flex-1">
-                            <div className="flex items-center gap-2">
-                              <span className="text-lg group-hover:text-deep-red transition-colors font-medium">{item.name}</span>
-                              {item.isSpecial && <Crown size={14} className="text-primary-gold" />}
-                            </div>
-                            {item.description && (
-                              <p className="text-xs text-gray-500 mt-0.5 line-clamp-2 max-w-md">
-                                {item.description}
-                              </p>
-                            )}
-                            <span className="text-deep-red font-bold text-lg">₹{item.price}</span>
-                          </div>
-                          <button 
-                            onClick={() => addToCart(item)}
-                            disabled={!item.available}
-                            className={cn(
-                              "ml-4 px-3 py-2 rounded-full transition-all transform hover:scale-105 active:scale-95 shadow-md flex items-center gap-2",
-                              item.available 
-                                ? "bg-primary-gold text-black hover:bg-dark-bg hover:text-primary-gold" 
-                                : "bg-gray-200 text-gray-400 cursor-not-allowed"
-                            )}
-                            title={!user ? "Sign in to order" : item.available ? "Add to cart" : "Sold Out"}
-                          >
-                            {!user ? (
-                              <span className="text-[10px] font-bold uppercase tracking-wider">Sign in to Order</span>
-                            ) : item.available ? (
-                              <Plus size={20} />
-                            ) : (
-                              <X size={20} />
-                            )}
-                          </button>
+          <AnimatePresence>
+            {isLoadingMenu ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8 lg:gap-12">
+                {[1, 2, 3, 4].map(i => (
+                  <div key={i} className="bg-cream-bg border border-gray-100 p-6 sm:p-8 rounded-2xl space-y-4">
+                    {[1, 2, 3].map(j => (
+                      <div key={j} className="flex justify-between items-center border-b border-dashed border-gray-300 pb-3">
+                        <div className="flex-1 space-y-2">
+                          <Skeleton className="h-6 w-3/4" />
+                          <Skeleton className="h-4 w-1/2" />
+                          <Skeleton className="h-5 w-1/4" />
                         </div>
-                      ))}
+                        <Skeleton className="h-10 w-10 rounded-full ml-4" />
+                      </div>
+                    ))}
                   </div>
-                </div>
-              ) : (
-                <div className="col-span-2 text-center py-12 text-gray-400">
-                  No items in this category yet.
-                </div>
-              )}
-            </motion.div>
+                ))}
+              </div>
+            ) : (
+              <motion.div
+                key={activeCategoryId + searchTerm}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                transition={{ duration: 0.3 }}
+                className="grid grid-cols-1 md:grid-cols-2 gap-8 lg:gap-12"
+              >
+                {(searchTerm 
+                  ? menuItems.filter(item => item.name.toLowerCase().includes(searchTerm.toLowerCase()))
+                  : menuItems.filter(item => item.categoryId === activeCategoryId)
+                ).length > 0 ? (
+                  <div className="bg-cream-bg border border-gray-100 p-6 sm:p-8 rounded-2xl md:col-span-2">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-6">
+                      {(searchTerm 
+                        ? menuItems.filter(item => item.name.toLowerCase().includes(searchTerm.toLowerCase()))
+                        : menuItems.filter(item => item.categoryId === activeCategoryId)
+                      ).map((item, iIdx) => (
+                          <div key={iIdx} className="flex justify-between items-center border-b border-dashed border-gray-300 pb-3 group">
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2">
+                                <span className="text-lg group-hover:text-deep-red transition-colors font-medium">{item.name}</span>
+                                {item.isSpecial && <Crown size={14} className="text-primary-gold" />}
+                              </div>
+                              {item.description && (
+                                <p className="text-xs text-gray-500 mt-0.5 line-clamp-2 max-w-md">
+                                  {item.description}
+                                </p>
+                              )}
+                              <span className="text-deep-red font-bold text-lg">₹{item.price}</span>
+                            </div>
+                            <button 
+                              onClick={() => addToCart(item)}
+                              disabled={!item.available}
+                              className={cn(
+                                "ml-4 px-3 py-2 rounded-full transition-all transform hover:scale-105 active:scale-95 shadow-md flex items-center gap-2",
+                                item.available 
+                                  ? "bg-primary-gold text-black hover:bg-dark-bg hover:text-primary-gold" 
+                                  : "bg-gray-200 text-gray-400 cursor-not-allowed"
+                              )}
+                              title={!user ? "Sign in to order" : item.available ? "Add to cart" : "Sold Out"}
+                            >
+                              {!user ? (
+                                <span className="text-[10px] font-bold uppercase tracking-wider">Sign in to Order</span>
+                              ) : item.available ? (
+                                <Plus size={20} />
+                              ) : (
+                                <X size={20} />
+                              )}
+                            </button>
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="col-span-2 text-center py-12 text-gray-400">
+                    No items in this category yet.
+                  </div>
+                )}
+              </motion.div>
+            )}
           </AnimatePresence>
 
           <div className="mt-16 bg-[#fff9db] border border-[#ffeeba] p-8 rounded-2xl flex flex-col items-center text-center max-w-3xl mx-auto">
@@ -1002,7 +1111,12 @@ export default function App() {
               </div>
 
               <div className="flex-1 overflow-y-auto p-6 space-y-6">
-                {cart.length === 0 ? (
+                {user && !userProfile ? (
+                  <div className="h-full flex flex-col items-center justify-center text-center space-y-4">
+                    <Loader size={40} />
+                    <p className="text-gray-500 font-medium">Syncing your profile...</p>
+                  </div>
+                ) : cart.length === 0 ? (
                   <div className="h-full flex flex-col items-center justify-center text-center space-y-4 opacity-50">
                     <ShoppingCart size={64} className="text-gray-300" />
                     <p className="text-xl font-medium">Your cart is empty</p>
@@ -1046,7 +1160,7 @@ export default function App() {
                   <p className="text-[10px] font-bold text-gray-400 uppercase mb-3 tracking-wider flex items-center gap-2">
                     <Flame size={12} className="text-orange-500" /> You might also like
                   </p>
-                  <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-hide">
+                  <div className="flex gap-3 overflow-x-auto pb-2">
                     {menuItems
                       .filter(item => 
                         item.available && 
@@ -1260,15 +1374,14 @@ export default function App() {
                       >
                         {orderStatus === 'processing' ? (
                           <>
-                            <motion.div 
-                              animate={{ rotate: 360 }}
-                              transition={{ repeat: Infinity, duration: 1, ease: 'linear' }}
-                              className="w-6 h-6 border-2 border-primary-gold border-t-transparent rounded-full"
-                            />
-                            PROCESSING...
+                            <Loader size={24} />
+                            PROCESSING ORDER...
                           </>
                         ) : (
-                          'PLACE ORDER NOW'
+                          <>
+                            <CheckCircle size={20} />
+                            PLACE ORDER NOW (₹{cartTotal})
+                          </>
                         )}
                       </button>
                     </div>

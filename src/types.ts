@@ -82,8 +82,16 @@ export interface MenuCategory {
 export interface Advertisement {
   id: string;
   title: string;
+  description?: string;
+  businessName?: string;
+  phone?: string;
+  location?: string;
   type: 'image' | 'video';
   url: string;
   active: boolean;
+  startDate?: string;
+  endDate?: string;
+  views?: number;
+  clicks?: number;
   createdAt: any;
 }

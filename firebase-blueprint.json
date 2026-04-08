@@ -127,9 +127,17 @@
       "properties": {
         "id": { "type": "string" },
         "title": { "type": "string" },
+        "description": { "type": "string" },
+        "businessName": { "type": "string" },
+        "phone": { "type": "string" },
+        "location": { "type": "string" },
         "type": { "type": "string", "enum": ["image", "video"] },
         "url": { "type": "string" },
         "active": { "type": "boolean" },
+        "startDate": { "type": "string" },
+        "endDate": { "type": "string" },
+        "views": { "type": "number" },
+        "clicks": { "type": "number" },
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["title", "type", "url", "active", "createdAt"]

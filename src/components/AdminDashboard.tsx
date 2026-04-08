@@ -1,14 +1,14 @@
-import React, { useState } from 'react';
-import { LayoutDashboard, Plus, Trash2, Edit, Save, X, CheckCircle, AlertCircle, TrendingUp, BarChart3, PieChart, Megaphone, Upload, Play, Image as ImageIcon } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { LayoutDashboard, Plus, Trash2, Edit, Save, X, CheckCircle, AlertCircle, TrendingUp, BarChart3, PieChart, Megaphone, Upload, Play, Image as ImageIcon, Search } from 'lucide-react';
 import { MenuCategory, MenuItem, UserProfile, Order, Advertisement } from '../types';
-import { collection, addDoc, updateDoc, deleteDoc, doc, getDocs, writeBatch, onSnapshot, query, orderBy, serverTimestamp } from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL, deleteObject, listAll } from 'firebase/storage';
+import { collection, addDoc, updateDoc, deleteDoc, doc, getDocs, writeBatch, onSnapshot, query, orderBy, serverTimestamp, setDoc } from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL, deleteObject, listAll, uploadBytesResumable } from 'firebase/storage';
 import { db, storage, auth, handleFirestoreError, OperationType } from '../firebase';
 import { INITIAL_MENU_DATA } from '../constants';
-import { useEffect } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { RefreshCw } from 'lucide-react';
+import { RefreshCw, X as XIcon } from 'lucide-react';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -27,10 +27,24 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ categories, menu
   const [isResetting, setIsResetting] = useState(false);
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [advertisements, setAdvertisements] = useState<Advertisement[]>([]);
+  const [isAddingAd, setIsAddingAd] = useState(false);
+  const [editingAd, setEditingAd] = useState<Advertisement | null>(null);
+  const [newAd, setNewAd] = useState<Partial<Advertisement>>({
+    title: '',
+    description: '',
+    businessName: '',
+    phone: '',
+    location: '',
+    active: true
+  });
+  const [adFile, setAdFile] = useState<File | null>(null);
+  const [adPreviewUrl, setAdPreviewUrl] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [adSearchTerm, setAdSearchTerm] = useState('');
   const [uploadStatus, setUploadStatus] = useState<string>('');
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadTask, setUploadTask] = useState<any>(null);
 
   useEffect(() => {
     const checkAds = async () => {
@@ -66,6 +80,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ categories, menu
     return () => unsubscribe();
   }, []);
 
+  useEffect(() => {
+    if (!adFile) {
+      setAdPreviewUrl(null);
+      return;
+    }
+
+    const objectUrl = URL.createObjectURL(adFile);
+    setAdPreviewUrl(objectUrl);
+
+    // Free memory when component unmounts or adFile changes
+    return () => URL.revokeObjectURL(objectUrl);
+  }, [adFile]);
   useEffect(() => {
     const unsubscribe = onSnapshot(collection(db, 'users'), (snapshot) => {
       setUsers(snapshot.docs.map(d => d.data() as UserProfile));
@@ -129,23 +155,46 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ categories, menu
     }
   };
   
-  const handleUploadAd = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    console.log("handleUploadAd triggered");
-    const file = e.target.files?.[0];
-    if (!file) {
-      console.log("No file selected");
+  useEffect(() => {
+    if (isAddingAd) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = 'unset';
+    }
+    return () => {
+      document.body.style.overflow = 'unset';
+    };
+  }, [isAddingAd]);
+
+  const debugStorage = async () => {
+    try {
+      setUploadStatus('Testing storage connection...');
+      const testBlob = new Blob(['test'], { type: 'text/plain' });
+      const testRef = ref(storage, `test_${Date.now()}.txt`);
+      await uploadBytes(testRef, testBlob);
+      const url = await getDownloadURL(testRef);
+      alert(`Storage test successful! URL: ${url}`);
+      setUploadStatus('');
+    } catch (e: any) {
+      console.error("Storage debug failed:", e);
+      alert(`Storage test failed: ${e.message}. This usually means storage permissions or CORS are not configured correctly.`);
+      setUploadStatus('');
+    }
+  };
+
+  const handleUploadAd = async () => {
+    if (!newAd.title) {
+      alert("Please provide at least a title.");
       return;
     }
 
-    const title = prompt("Enter a title for this advertisement:");
-    if (!title) {
-      e.target.value = '';
+    if (!editingAd && !adFile) {
+      alert("Please select a file to upload.");
       return;
     }
 
     setUploading(true);
     setUploadProgress(0);
-    setUploadStatus('Starting upload...');
     
     try {
       if (!auth.currentUser) {
@@ -153,55 +202,151 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ categories, menu
         setUploading(false);
         return;
       }
-      console.log("DEBUG: File object details:", {
-        name: file.name,
-        size: file.size,
-        type: file.type,
-        lastModified: file.lastModified
-      });
-      console.log("Starting upload for file:", file.name, "type:", file.type, "size:", file.size);
-      const type = file.type.startsWith('video/') ? 'video' : 'image';
-      const fileName = `${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.]/g, '_')}`;
-      const storageRef = ref(storage, `ads/${fileName}`);
-      console.log("Storage ref created:", storageRef.fullPath);
-      
-      setUploadStatus('Uploading to storage...');
-      const uploadResult = await uploadBytes(storageRef, file);
-      console.log("Upload complete, getting download URL...");
-      
-      setUploadStatus('Getting download URL...');
-      const downloadURL = await getDownloadURL(uploadResult.ref);
-      console.log("Download URL obtained:", downloadURL);
-      
-      setUploadStatus('Saving to Firestore...');
-      console.log("Saving to Firestore with data:", { title, type, url: downloadURL });
-      
-      if (!downloadURL || !downloadURL.startsWith('http')) {
-        throw new Error("Invalid download URL obtained from storage.");
-      }
 
-      const docRef = await addDoc(collection(db, 'advertisements'), {
-        title,
-        type,
-        url: downloadURL,
-        active: true,
-        createdAt: serverTimestamp()
-      });
-      console.log("Firestore save complete! Doc ID:", docRef.id);
-      
-      setUploading(false);
-      setUploadStatus('');
-      setUploadProgress(0);
-      e.target.value = '';
-      alert("Advertisement uploaded successfully!");
+      // If we have a new file, upload it
+      if (adFile) {
+        if (adFile.size > 10 * 1024 * 1024) {
+          alert("File is too large. Maximum size is 10MB.");
+          setUploading(false);
+          return;
+        }
+
+        const type = adFile.type.startsWith('video/') ? 'video' : 'image';
+        const fileName = `${Date.now()}_${adFile.name.replace(/[^a-zA-Z0-9.]/g, '_')}`;
+        const storageRef = ref(storage, `ads/${fileName}`);
+        
+        const task = uploadBytesResumable(storageRef, adFile);
+        setUploadTask(task);
+
+        task.on('state_changed', 
+          (snapshot) => {
+            const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+            setUploadProgress(progress);
+            setUploadStatus(`Uploading: ${Math.round(progress)}%`);
+          }, 
+          (error) => {
+            console.error("Upload failed:", error);
+            if (error.code !== 'storage/canceled') {
+              alert("Upload failed: " + error.message);
+            }
+            setUploading(false);
+            setUploadStatus('');
+            setUploadProgress(0);
+            setUploadTask(null);
+          }, 
+          async () => {
+            try {
+              setUploadStatus('Finalizing...');
+              const downloadURL = await getDownloadURL(task.snapshot.ref);
+              
+              if (editingAd) {
+                // Update existing ad with new file
+                await updateDoc(doc(db, 'advertisements', editingAd.id), {
+                  ...newAd,
+                  type,
+                  url: downloadURL,
+                });
+                // Optional: Delete old file if URL changed
+                if (editingAd.url && !editingAd.url.startsWith('https://picsum.photos')) {
+                  try {
+                    const oldRef = ref(storage, editingAd.url);
+                    await deleteObject(oldRef);
+                  } catch (e) {
+                    console.warn("Could not delete old ad file:", e);
+                  }
+                }
+              } else {
+                // Create new ad
+                await addDoc(collection(db, 'advertisements'), {
+                  ...newAd,
+                  type,
+                  url: downloadURL,
+                  active: true,
+                  views: 0,
+                  clicks: 0,
+                  createdAt: serverTimestamp()
+                });
+              }
+              
+              finalizeAdSave();
+            } catch (e: any) {
+              console.error("Error finalizing ad:", e);
+              alert("Error saving ad details: " + e.message);
+              setUploading(false);
+              setUploadStatus('');
+              setUploadTask(null);
+            }
+          }
+        );
+      } else if (editingAd) {
+        // Just update fields without new file
+        await updateDoc(doc(db, 'advertisements', editingAd.id), {
+          ...newAd
+        });
+        finalizeAdSave();
+      }
     } catch (error: any) {
-      console.error("Upload failed with error:", error);
+      console.error("Ad upload error:", error);
+      alert("An error occurred during upload: " + error.message);
       setUploading(false);
       setUploadStatus('');
       setUploadProgress(0);
-      e.target.value = '';
-      alert(`Upload failed: ${error.message}. Please check your connection and try again.`);
+      setUploadTask(null);
     }
+  };
+
+  const finalizeAdSave = () => {
+    setUploading(false);
+    setUploadStatus('');
+    setUploadProgress(0);
+    setUploadTask(null);
+    setIsAddingAd(false);
+    setEditingAd(null);
+    setAdFile(null);
+    setNewAd({
+      title: '',
+      description: '',
+      businessName: '',
+      phone: '',
+      location: '',
+      active: true
+    });
+    alert(editingAd ? "Advertisement updated successfully!" : "Advertisement published successfully!");
+  };
+
+  const handleCancelUpload = () => {
+    if (uploadTask) {
+      uploadTask.cancel();
+      setUploadTask(null);
+    }
+    setUploading(false);
+    setUploadStatus('');
+    setUploadProgress(0);
+    if (!uploading) {
+      setIsAddingAd(false);
+      setEditingAd(null);
+      setNewAd({
+        title: '',
+        description: '',
+        businessName: '',
+        phone: '',
+        location: '',
+        active: true
+      });
+    }
+  };
+
+  const handleEditAd = (ad: Advertisement) => {
+    setEditingAd(ad);
+    setNewAd({
+      title: ad.title,
+      description: ad.description || '',
+      businessName: ad.businessName || '',
+      phone: ad.phone || '',
+      location: ad.location || '',
+      active: ad.active
+    });
+    setIsAddingAd(true);
   };
 
   const handleDeleteAd = async (ad: Advertisement) => {
@@ -754,12 +899,22 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ categories, menu
         )}
         {activeTab === 'ads' && (
           <div className="space-y-8">
-            <div className="flex justify-between items-center">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
               <div>
                 <h2 className="text-2xl font-display">Local Advertisements</h2>
                 <p className="text-gray-500">Manage promotional images and videos</p>
               </div>
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 w-full md:w-auto">
+                <div className="relative flex-1 md:w-64">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+                  <input 
+                    type="text"
+                    placeholder="Search ads..."
+                    value={adSearchTerm}
+                    onChange={(e) => setAdSearchTerm(e.target.value)}
+                    className="w-full pl-10 pr-4 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-primary-gold outline-none text-sm"
+                  />
+                </div>
                 <button 
                   onClick={async () => {
                     try {
@@ -802,79 +957,279 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ categories, menu
                   <Plus size={18} />
                   Test Ad
                 </button>
-                <div className="relative">
-                  <input 
-                    type="file" 
-                    id="ad-upload" 
-                    className="hidden" 
-                    accept="image/*,video/*"
-                    onChange={handleUploadAd}
-                    disabled={uploading}
-                  />
-                  <label 
-                    htmlFor="ad-upload"
-                    className={cn(
-                      "bg-dark-bg text-primary-gold px-6 py-3 rounded-xl font-bold flex items-center gap-2 cursor-pointer hover:bg-primary-gold hover:text-black transition-all shadow-lg",
-                      uploading && "opacity-50 cursor-not-allowed"
-                    )}
-                  >
-                    <Upload size={20} />
-                    {uploading ? uploadStatus : 'Upload New Ad'}
-                  </label>
-                </div>
+                <button 
+                  onClick={() => setIsAddingAd(true)}
+                  className="bg-dark-bg text-primary-gold px-6 py-3 rounded-xl font-bold flex items-center gap-2 hover:bg-primary-gold hover:text-black transition-all shadow-lg"
+                >
+                  <Upload size={20} />
+                  Upload New Ad
+                </button>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {advertisements.map((ad) => (
-                <div key={ad.id} className="bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-100 group">
-                  <div className="aspect-video bg-gray-100 relative overflow-hidden">
-                    {ad.type === 'video' ? (
-                      <video src={ad.url} className="w-full h-full object-cover" controls />
-                    ) : (
-                      <img src={ad.url} alt={ad.title} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                    )}
-                    <div className="absolute top-2 right-2">
-                      <span className={cn(
-                        "px-2 py-1 rounded-full text-[10px] font-bold uppercase",
-                        ad.active ? "bg-green-500 text-white" : "bg-gray-500 text-white"
-                      )}>
-                        {ad.active ? 'Active' : 'Inactive'}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="p-4">
-                    <div className="flex justify-between items-start mb-4">
-                      <div>
-                        <h3 className="font-bold text-lg">{ad.title}</h3>
-                        <p className="text-xs text-gray-500 flex items-center gap-1">
-                          {ad.type === 'video' ? <Play size={10} /> : <ImageIcon size={10} />}
-                          {ad.type.toUpperCase()}
-                        </p>
+            {/* Add Ad Modal */}
+            <AnimatePresence>
+              {isAddingAd && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+                  <motion.div 
+                    initial={{ opacity: 0, scale: 0.9, y: 20 }}
+                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.9, y: 20 }}
+                    className="bg-white w-full max-w-2xl rounded-[32px] overflow-hidden shadow-2xl flex flex-col max-h-[90vh]"
+                  >
+                    <div className="flex flex-col h-full">
+                      <div className="p-6 sm:p-8 overflow-y-auto flex-1">
+                        <div className="flex justify-between items-center mb-8 sticky top-0 bg-white z-10 pb-2">
+                          <div className="flex flex-col">
+                            <h3 className="text-2xl font-display">{editingAd ? 'Edit Advertisement' : 'Upload Advertisement'}</h3>
+                            <button 
+                              onClick={debugStorage}
+                              className="text-[10px] text-blue-500 hover:underline text-left"
+                            >
+                              Debug Storage Connection
+                            </button>
+                          </div>
+                          <button onClick={handleCancelUpload} className="p-2 hover:bg-gray-100 rounded-full transition-colors">
+                            <X size={24} />
+                          </button>
+                        </div>
+
+                        <div className="space-y-6">
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div>
+                              <label className="block text-sm font-bold text-gray-700 mb-2 uppercase tracking-wider">Ad Title *</label>
+                              <input 
+                                type="text" 
+                                value={newAd.title}
+                                onChange={(e) => setNewAd({...newAd, title: e.target.value})}
+                                className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-primary-gold outline-none"
+                                placeholder="e.g. Summer Special Biryani"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-sm font-bold text-gray-700 mb-2 uppercase tracking-wider">Business Name</label>
+                              <input 
+                                type="text" 
+                                value={newAd.businessName}
+                                onChange={(e) => setNewAd({...newAd, businessName: e.target.value})}
+                                className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-primary-gold outline-none"
+                                placeholder="e.g. Ganesh Restaurant"
+                              />
+                            </div>
+                          </div>
+
+                          <div>
+                            <label className="block text-sm font-bold text-gray-700 mb-2 uppercase tracking-wider">Description</label>
+                            <textarea 
+                              value={newAd.description}
+                              onChange={(e) => setNewAd({...newAd, description: e.target.value})}
+                              className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-primary-gold outline-none h-24 resize-none"
+                              placeholder="Tell customers more about this offer..."
+                            />
+                          </div>
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div>
+                              <label className="block text-sm font-bold text-gray-700 mb-2 uppercase tracking-wider">Contact Phone</label>
+                              <input 
+                                type="text" 
+                                value={newAd.phone}
+                                onChange={(e) => setNewAd({...newAd, phone: e.target.value})}
+                                className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-primary-gold outline-none"
+                                placeholder="e.g. +91 81069 64427"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-sm font-bold text-gray-700 mb-2 uppercase tracking-wider">Location</label>
+                              <input 
+                                type="text" 
+                                value={newAd.location}
+                                onChange={(e) => setNewAd({...newAd, location: e.target.value})}
+                                className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-primary-gold outline-none"
+                                placeholder="e.g. Hyderabad, Telangana"
+                              />
+                            </div>
+                          </div>
+
+                          <div>
+                            <label className="block text-sm font-bold text-gray-700 mb-2 uppercase tracking-wider">Select Media *</label>
+                            
+                            {/* Media Preview */}
+                            {(adPreviewUrl || (editingAd && editingAd.url)) && (
+                              <div className="mb-4 relative aspect-video bg-gray-100 rounded-2xl overflow-hidden border border-gray-200">
+                                {adFile ? (
+                                  adFile.type.startsWith('video/') ? (
+                                    <video src={adPreviewUrl!} className="w-full h-full object-cover" controls />
+                                  ) : (
+                                    <img src={adPreviewUrl!} alt="Preview" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                                  )
+                                ) : editingAd && (
+                                  editingAd.type === 'video' ? (
+                                    <video src={editingAd.url} className="w-full h-full object-cover" controls />
+                                  ) : (
+                                    <img src={editingAd.url} alt="Current Media" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                                  )
+                                )}
+                                <div className="absolute top-2 left-2 bg-black/50 text-white px-2 py-1 rounded text-[10px] font-bold uppercase">
+                                  {adFile ? 'New Media Preview' : 'Current Media'}
+                                </div>
+                              </div>
+                            )}
+
+                            <div className="relative">
+                              <input 
+                                type="file" 
+                                id="ad-file-input"
+                                className="hidden" 
+                                accept="image/*,video/*"
+                                onChange={(e) => setAdFile(e.target.files?.[0] || null)}
+                              />
+                              <label 
+                                htmlFor="ad-file-input"
+                                className="w-full flex flex-col items-center justify-center border-2 border-dashed border-gray-200 rounded-2xl p-8 hover:border-primary-gold hover:bg-primary-gold/5 transition-all cursor-pointer"
+                              >
+                                {adFile ? (
+                                  <div className="flex items-center gap-3 text-green-600 font-bold">
+                                    <CheckCircle size={24} />
+                                    <span>{adFile.name}</span>
+                                  </div>
+                                ) : (
+                                  <>
+                                    <Upload className="text-gray-400 mb-2" size={32} />
+                                    <span className="text-gray-500 font-medium">Click to select image or video</span>
+                                    <span className="text-xs text-gray-400 mt-1">Max size: 10MB</span>
+                                  </>
+                                )}
+                              </label>
+                            </div>
+                          </div>
+
+                          {uploading && (
+                            <div className="space-y-2">
+                              <div className="flex justify-between text-sm font-bold">
+                                <span>{uploadStatus}</span>
+                                <span>{Math.round(uploadProgress)}%</span>
+                              </div>
+                              <div className="w-full bg-gray-100 h-2 rounded-full overflow-hidden">
+                                <motion.div 
+                                  className="bg-primary-gold h-full"
+                                  initial={{ width: 0 }}
+                                  animate={{ width: `${uploadProgress}%` }}
+                                />
+                              </div>
+                            </div>
+                          )}
+                        </div>
                       </div>
-                      <button 
-                        onClick={() => handleDeleteAd(ad)}
-                        className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                      >
-                        <Trash2 size={18} />
-                      </button>
+                      
+                      <div className="p-6 sm:p-8 bg-gray-50 border-t border-gray-100 flex gap-4">
+                        <button 
+                          onClick={handleCancelUpload}
+                          className="flex-1 px-6 py-4 rounded-2xl font-bold border border-gray-200 bg-white hover:bg-gray-50 transition-colors"
+                        >
+                          {uploading ? 'STOP UPLOAD' : 'CANCEL'}
+                        </button>
+                        <button 
+                          onClick={handleUploadAd}
+                          disabled={uploading || (!adFile && !editingAd) || !newAd.title}
+                          className="flex-1 px-6 py-4 rounded-2xl font-bold bg-dark-bg text-primary-gold hover:bg-opacity-90 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-lg"
+                        >
+                          {uploading ? 'UPLOADING...' : (editingAd ? 'UPDATE AD' : 'PUBLISH AD')}
+                        </button>
+                      </div>
                     </div>
-                    <button 
-                      onClick={() => toggleAdStatus(ad)}
-                      className={cn(
-                        "w-full py-2 rounded-lg font-bold text-sm transition-all border-2",
-                        ad.active 
-                          ? "border-gray-200 text-gray-500 hover:border-red-200 hover:text-red-500" 
-                          : "border-primary-gold text-primary-gold hover:bg-primary-gold hover:text-black"
-                      )}
-                    >
-                      {ad.active ? 'Deactivate' : 'Activate'}
-                    </button>
-                  </div>
+                  </motion.div>
                 </div>
-              ))}
+              )}
+            </AnimatePresence>
+
+            <div className="bg-white rounded-2xl shadow-xl overflow-hidden border border-gray-200">
+              <table className="w-full text-left">
+                <thead>
+                  <tr className="bg-gray-50 border-b border-gray-200">
+                    <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Preview</th>
+                    <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Details</th>
+                    <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Type</th>
+                    <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Stats</th>
+                    <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Status</th>
+                    <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {advertisements
+                    .filter(ad => 
+                      ad.title.toLowerCase().includes(adSearchTerm.toLowerCase()) || 
+                      ad.businessName?.toLowerCase().includes(adSearchTerm.toLowerCase())
+                    )
+                    .map((ad) => (
+                    <tr key={ad.id} className="hover:bg-gray-50 transition-colors">
+                      <td className="px-6 py-4">
+                        <div className="w-20 h-12 bg-gray-100 rounded-lg overflow-hidden">
+                          {ad.type === 'video' ? (
+                            <div className="w-full h-full flex items-center justify-center bg-dark-bg text-primary-gold">
+                              <Play size={16} />
+                            </div>
+                          ) : (
+                            <img src={ad.url} alt={ad.title} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <p className="font-bold">{ad.title}</p>
+                        <p className="text-xs text-gray-500">{ad.businessName || 'No business name'}</p>
+                      </td>
+                      <td className="px-6 py-4">
+                        <span className="text-[10px] font-bold uppercase px-2 py-1 bg-gray-100 rounded-full flex items-center gap-1 w-fit">
+                          {ad.type === 'video' ? <Play size={10} /> : <ImageIcon size={10} />}
+                          {ad.type}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="flex flex-col gap-1 text-[10px] font-bold text-gray-500">
+                          <span className="flex items-center gap-1"><TrendingUp size={10} /> {ad.views || 0} views</span>
+                          <span className="flex items-center gap-1"><BarChart3 size={10} /> {ad.clicks || 0} clicks</span>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <span className={cn(
+                          "px-2 py-1 rounded-full text-[10px] font-bold uppercase",
+                          ad.active ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"
+                        )}>
+                          {ad.active ? 'Active' : 'Inactive'}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-2">
+                          <button 
+                            onClick={() => toggleAdStatus(ad)}
+                            title={ad.active ? 'Unpublish' : 'Publish'}
+                            className={cn(
+                              "p-2 rounded-lg transition-all",
+                              ad.active ? "text-gray-400 hover:text-red-500 hover:bg-red-50" : "text-primary-gold hover:bg-primary-gold/10"
+                            )}
+                          >
+                            {ad.active ? <X size={18} /> : <CheckCircle size={18} />}
+                          </button>
+                          <button 
+                            onClick={() => handleEditAd(ad)}
+                            className="p-2 text-blue-500 hover:bg-blue-50 rounded-lg transition-colors"
+                          >
+                            <Edit size={18} />
+                          </button>
+                          <button 
+                            onClick={() => handleDeleteAd(ad)}
+                            className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                          >
+                            <Trash2 size={18} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
               {advertisements.length === 0 && !uploading && (
-                <div className="col-span-full py-20 text-center bg-gray-50 rounded-3xl border-2 border-dashed border-gray-200">
+                <div className="py-20 text-center bg-gray-50">
                   <Megaphone className="mx-auto text-gray-300 mb-4" size={48} />
                   <p className="text-gray-500">No advertisements uploaded yet.</p>
                 </div>
